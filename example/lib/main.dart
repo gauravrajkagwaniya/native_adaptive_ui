@@ -1,5 +1,5 @@
-import 'package:flutter/cupertino.dart' show CupertinoColors, CupertinoIcons;
-import 'package:flutter/material.dart';
+import 'package:cupertino_ui/cupertino_ui.dart' show CupertinoColors, CupertinoIcons;
+import 'package:material_ui/material_ui.dart';
 import 'package:native_adaptive_ui/native_adaptive_ui.dart';
 
 Future<void> main() async {

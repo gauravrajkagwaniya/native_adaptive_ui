@@ -44,11 +44,13 @@ dependencies:
   # draw from it, and without the dependency every one of those glyphs renders
   # as a "?" box in the consuming app.
   cupertino_icons: ^1.0.8
+  cupertino_ui: ^1.0.1
   flutter:
     sdk: flutter
   # Rasterizes AdaptiveDestination.iconSvgAsset for the native UITabBar — Flutter's
   # own image pipeline has no SVG decoder, and a native UIImage needs raster bytes.
   flutter_svg: ^2.2.1
+  material_ui: ^1.1.0
 
 dev_dependencies:
   flutter_lints: ^6.0.0
