@@ -39,6 +39,64 @@ PageRoute<T> adaptivePageRoute<T>({
   );
 }
 
+/// The declarative counterpart to [adaptivePageRoute], for Router 2.0.
+///
+/// `GoRoute.pageBuilder` — and every other `Page`-based API — wants a [Page],
+/// not a [Route], so [adaptivePageRoute] cannot be used there. This returns the
+/// same platform split one level up: a `CupertinoPage` on Apple eras, including
+/// the interactive edge-swipe back gesture, and a `MaterialPage` elsewhere.
+///
+/// ```dart
+/// GoRoute(
+///   path: 'detail',
+///   pageBuilder: (context, state) => adaptivePage(
+///     context: context,
+///     child: const DetailScreen(),
+///   ),
+/// )
+/// ```
+///
+/// The `context` handed to a `pageBuilder` sits below [AdaptiveApp.router]'s
+/// scope — `WidgetsApp` wraps the `Router` in its `builder` — so the era
+/// resolves here exactly as it does inside a route body.
+///
+/// [title] is Cupertino-only: it supplies the text that the *next* screen's
+/// back button shows, and `MaterialPage` has no equivalent.
+Page<T> adaptivePage<T>({
+  required BuildContext context,
+  required Widget child,
+  LocalKey? key,
+  String? name,
+  Object? arguments,
+  String? restorationId,
+  String? title,
+  bool fullscreenDialog = false,
+  bool maintainState = true,
+}) {
+  final era = AdaptiveScope.of(context).era;
+  if (era.isApple) {
+    return CupertinoPage<T>(
+      child: child,
+      key: key,
+      name: name,
+      arguments: arguments,
+      restorationId: restorationId,
+      title: title,
+      fullscreenDialog: fullscreenDialog,
+      maintainState: maintainState,
+    );
+  }
+  return MaterialPage<T>(
+    child: child,
+    key: key,
+    name: name,
+    arguments: arguments,
+    restorationId: restorationId,
+    fullscreenDialog: fullscreenDialog,
+    maintainState: maintainState,
+  );
+}
+
 /// Pushes [page] with the platform's own transition.
 ///
 /// ```dart

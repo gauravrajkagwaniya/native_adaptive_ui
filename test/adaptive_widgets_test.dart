@@ -38,6 +38,58 @@ Future<void> pumpEra(
   );
 }
 
+/// Like [pumpEra], but pumps [app] itself rather than wrapping a child in a
+/// plain `MaterialApp`. [AdaptiveApp] installs its own [AdaptiveScope], so
+/// wrapping it in another one would test the wrapper instead of the widget.
+Future<void> pumpApp(
+  WidgetTester tester,
+  DesignEra era,
+  Widget app, {
+  double width = 390,
+  double height = 844,
+}) async {
+  NativeAdaptiveUi.debugSetPlatform(PlatformInfo.fake(era: era));
+  addTearDown(() => NativeAdaptiveUi.debugSetPlatform(null));
+  tester.view.devicePixelRatio = 1.0;
+  tester.view.physicalSize = Size(width, height);
+  addTearDown(tester.view.reset);
+  await tester.pumpWidget(app);
+}
+
+/// A minimal hand-rolled Router 2.0 config.
+///
+/// The point of `AdaptiveApp.router` is that it takes a `RouterConfig` and so
+/// needs no router package; testing it with one would undercut that. `GoRouter`
+/// reaches `routerConfig` through exactly this interface.
+RouterConfig<Object> _testRouterConfig(List<Widget> Function() pages) {
+  return RouterConfig<Object>(
+    routerDelegate: _TestRouterDelegate(pages),
+  );
+}
+
+class _TestRouterDelegate extends RouterDelegate<Object>
+    with ChangeNotifier, PopNavigatorRouterDelegateMixin<Object> {
+  _TestRouterDelegate(this._pages);
+
+  final List<Widget> Function() _pages;
+
+  @override
+  final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+  @override
+  Widget build(BuildContext context) => Navigator(
+        key: navigatorKey,
+        pages: <Page<Object?>>[
+          for (final page in _pages())
+            MaterialPage<void>(key: ValueKey<Widget>(page), child: page),
+        ],
+        onDidRemovePage: (_) {},
+      );
+
+  @override
+  Future<void> setNewRoutePath(Object configuration) async {}
+}
+
 void main() {
   tearDown(() => NativeAdaptiveUi.debugSetPlatform(null));
 
@@ -887,6 +939,253 @@ void main() {
         AdaptiveSlider(value: 0.5, onChanged: (_) {}, vertical: true),
       );
       expect(find.byType(RotatedBox), findsOneWidget);
+    });
+  });
+
+  group('AdaptiveApp.router', () {
+    testWidgets('builds a CupertinoApp on an Apple era', (tester) async {
+      await pumpApp(
+        tester,
+        DesignEra.iosLiquidGlass,
+        AdaptiveApp.router(
+          routerConfig: _testRouterConfig(
+            () => const <Widget>[AdaptiveScaffold(title: 'Home', body: SizedBox())],
+          ),
+        ),
+      );
+      expect(find.byType(CupertinoApp), findsOneWidget);
+      expect(find.byType(MaterialApp), findsNothing);
+      expect(find.text('Home'), findsOneWidget);
+    });
+
+    testWidgets('builds a MaterialApp on a Material era', (tester) async {
+      await pumpApp(
+        tester,
+        DesignEra.material3,
+        AdaptiveApp.router(
+          routerConfig: _testRouterConfig(
+            () => const <Widget>[AdaptiveScaffold(title: 'Home', body: SizedBox())],
+          ),
+        ),
+      );
+      expect(find.byType(MaterialApp), findsOneWidget);
+      expect(find.byType(CupertinoApp), findsNothing);
+    });
+
+    // The whole reason AdaptiveApp exists. A CupertinoApp supplies neither a
+    // Material ancestor nor MaterialLocalizations, so a ListTile inside one
+    // throws twice over — and the router path is just as capable of showing a
+    // ListTile as the navigator path is.
+    testWidgets('keeps the Material and localizations shims on Apple eras', (
+      tester,
+    ) async {
+      await pumpApp(
+        tester,
+        DesignEra.iosLiquidGlass,
+        AdaptiveApp.router(
+          routerConfig: _testRouterConfig(
+            () => const <Widget>[
+              AdaptiveScaffold(
+                title: 'Home',
+                body: ListTile(title: Text('Profile')),
+              ),
+            ],
+          ),
+        ),
+      );
+      expect(tester.takeException(), isNull);
+      expect(find.text('Profile'), findsOneWidget);
+      final context = tester.element(find.text('Profile'));
+      expect(context.findAncestorWidgetOfExactType<Material>(), isNotNull);
+      expect(Localizations.of<MaterialLocalizations>(
+        context,
+        MaterialLocalizations,
+      ), isNotNull);
+    });
+
+    testWidgets('installs an AdaptiveScope above the router', (tester) async {
+      late DesignEra seen;
+      await pumpApp(
+        tester,
+        DesignEra.material3,
+        AdaptiveApp.router(
+          eraOverride: DesignEra.iosLiquidGlass,
+          routerConfig: _testRouterConfig(
+            () => <Widget>[
+              Builder(
+                builder: (context) {
+                  seen = AdaptiveScope.of(context).era;
+                  return const SizedBox();
+                },
+              ),
+            ],
+          ),
+        ),
+      );
+      // eraOverride wins over the fake platform, and reaches route bodies —
+      // which is what makes adaptivePage resolvable inside a pageBuilder.
+      expect(seen, DesignEra.iosLiquidGlass);
+      expect(find.byType(CupertinoApp), findsOneWidget);
+    });
+  });
+
+  group('adaptivePage', () {
+    testWidgets('returns a CupertinoPage on Apple eras', (tester) async {
+      late Page<void> page;
+      await pumpEra(
+        tester,
+        DesignEra.iosLiquidGlass,
+        Builder(
+          builder: (context) {
+            page = adaptivePage<void>(
+              context: context,
+              child: const SizedBox(),
+              title: 'Detail',
+            );
+            return const SizedBox();
+          },
+        ),
+      );
+      expect(page, isA<CupertinoPage<void>>());
+      expect((page as CupertinoPage<void>).title, 'Detail');
+    });
+
+    testWidgets('returns a MaterialPage on Material eras', (tester) async {
+      late Page<void> page;
+      await pumpEra(
+        tester,
+        DesignEra.material3,
+        Builder(
+          builder: (context) {
+            page = adaptivePage<void>(context: context, child: const SizedBox());
+            return const SizedBox();
+          },
+        ),
+      );
+      expect(page, isA<MaterialPage<void>>());
+    });
+  });
+
+  group('AdaptiveScaffold router back button', () {
+    testWidgets('canPop: false suppresses the back button on a pushed route', (
+      tester,
+    ) async {
+      await pumpEra(
+        tester,
+        DesignEra.iosLiquidGlass,
+        Builder(
+          builder: (context) => AdaptiveButton(
+            onPressed: () => Navigator.of(context).push(
+              CupertinoPageRoute<void>(
+                builder: (_) => const AdaptiveScaffold(
+                  title: 'Detail',
+                  canPop: false,
+                  body: SizedBox(),
+                ),
+              ),
+            ),
+            child: const Text('Push'),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Push'));
+      await tester.pumpAndSettle();
+      // Navigator.canPop is true here; the override is what wins.
+      expect(find.byIcon(CupertinoIcons.chevron_back), findsNothing);
+    });
+
+    testWidgets('canPop: true shows a back button on a root route', (
+      tester,
+    ) async {
+      var popped = 0;
+      await pumpEra(
+        tester,
+        DesignEra.iosLiquidGlass,
+        AdaptiveScaffold(
+          title: 'Branch root',
+          canPop: true,
+          onBack: () => popped++,
+          body: const SizedBox(),
+        ),
+      );
+      // Nothing to pop on this navigator — the router says otherwise.
+      expect(find.byIcon(CupertinoIcons.chevron_back), findsOneWidget);
+      await tester.tap(find.byIcon(CupertinoIcons.chevron_back));
+      await tester.pumpAndSettle();
+      expect(popped, 1);
+    });
+
+    testWidgets('onBack replaces maybePop on a pushed route', (tester) async {
+      var popped = 0;
+      await pumpEra(
+        tester,
+        DesignEra.iosLiquidGlass,
+        Builder(
+          builder: (context) => AdaptiveButton(
+            onPressed: () => Navigator.of(context).push(
+              CupertinoPageRoute<void>(
+                builder: (_) => AdaptiveScaffold(
+                  title: 'Detail',
+                  onBack: () => popped++,
+                  body: const SizedBox(),
+                ),
+              ),
+            ),
+            child: const Text('Push'),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Push'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(CupertinoIcons.chevron_back));
+      await tester.pumpAndSettle();
+      expect(popped, 1);
+      // onBack fired instead of popping, so the route is still up.
+      expect(find.text('Detail'), findsOneWidget);
+    });
+
+    testWidgets('reaches the Material AppBar too', (tester) async {
+      var popped = 0;
+      await pumpEra(
+        tester,
+        DesignEra.material3,
+        AdaptiveScaffold(
+          title: 'Branch root',
+          canPop: true,
+          onBack: () => popped++,
+          body: const SizedBox(),
+        ),
+      );
+      expect(find.byType(BackButton), findsOneWidget);
+      await tester.tap(find.byType(BackButton));
+      await tester.pumpAndSettle();
+      expect(popped, 1);
+    });
+
+    testWidgets('canPop: false suppresses the Material back button', (
+      tester,
+    ) async {
+      await pumpEra(
+        tester,
+        DesignEra.material3,
+        Builder(
+          builder: (context) => AdaptiveButton(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const AdaptiveScaffold(
+                  title: 'Detail',
+                  canPop: false,
+                  body: SizedBox(),
+                ),
+              ),
+            ),
+            child: const Text('Push'),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Push'));
+      await tester.pumpAndSettle();
+      expect(find.byType(BackButton), findsNothing);
     });
   });
 }

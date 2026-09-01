@@ -49,6 +49,8 @@ class AdaptiveScaffold extends StatelessWidget {
     this.actionSfSymbols,
     this.onLeadingPressed,
     this.onActionPressed,
+    this.canPop,
+    this.onBack,
   });
 
   final Widget body;
@@ -77,6 +79,29 @@ class AdaptiveScaffold extends StatelessWidget {
   /// Fires with the tapped button's index into [actionSfSymbols]. Unused
   /// otherwise.
   final ValueChanged<int>? onActionPressed;
+
+  /// Whether a back affordance is shown. Defaults to `Navigator.canPop`.
+  ///
+  /// That default is right whenever the enclosing `Navigator` is the whole
+  /// story, and wrong as soon as a router splits navigation across more than
+  /// one — a go_router screen pushed on the *root* navigator from inside a
+  /// shell can pop, but `Navigator.canPop` asked from the shell says it cannot,
+  /// and a branch root that `context.pop()` would return to another branch
+  /// reports the reverse. Pass the router's own answer here in that case:
+  ///
+  /// ```dart
+  /// AdaptiveScaffold(
+  ///   title: 'Detail',
+  ///   canPop: context.canPop(),
+  ///   onBack: context.pop,
+  ///   body: ...,
+  /// )
+  /// ```
+  final bool? canPop;
+
+  /// What the back affordance does. Defaults to
+  /// `Navigator.of(context).maybePop()`. See [canPop].
+  final VoidCallback? onBack;
 
   /// The toolbar's center region. HIG: "customisable on macOS/iPadOS,
   /// collapses into a system overflow menu" — folded into the trailing group
@@ -201,14 +226,15 @@ class AdaptiveScaffold extends StatelessWidget {
       // that needs nothing extra here. The native bar has no such thing to
       // fall back on: it is a bare UINavigationBar with no UINavigationController
       // above it, so nothing supplies a back button unless this does.
-      final canPop = Navigator.canPop(context);
-      final autoBack = leadingSfSymbol == null && leading == null && canPop;
+      final effectiveCanPop = canPop ?? Navigator.canPop(context);
+      final autoBack =
+          leadingSfSymbol == null && leading == null && effectiveCanPop;
       final effectiveLeadingSfSymbol =
           leadingSfSymbol ?? (autoBack ? 'chevron.backward' : null);
       final effectiveOnLeadingPressed = leadingSfSymbol != null
           ? onLeadingPressed
           : (autoBack
-              ? () => Navigator.of(context).maybePop()
+              ? (onBack ?? () => Navigator.of(context).maybePop())
               : onLeadingPressed);
 
       return CupertinoPageScaffold(
@@ -225,16 +251,15 @@ class AdaptiveScaffold extends StatelessWidget {
                   )
                 : CupertinoNavigationBar(
                     middle: title == null ? null : Text(title!),
-                    // CupertinoNavigationBar already auto-generates a plain
-                    // chevron+"Back" leading from Navigator.canPop when this
-                    // is null — the correct look for iosClassic/macosClassic.
-                    // On a glass era that default predates Liquid Glass, so
-                    // it's replaced with the same rounded glass button the
-                    // native bar gets automatically from UIKit.
-                    leading: leading ??
-                        (leadingSfSymbol == null && canPop && tokens.hasGlass
-                            ? _GlassBackButton(tokens: tokens)
-                            : null),
+                    // CupertinoNavigationBar auto-generates a plain
+                    // chevron+"Back" leading from Navigator.canPop when
+                    // `leading` is null — the correct look for
+                    // iosClassic/macosClassic, and the reason this is only
+                    // overridden below. Gating it on [effectiveCanPop] is what
+                    // lets `canPop: false` suppress a chevron the enclosing
+                    // navigator would otherwise imply.
+                    automaticallyImplyLeading: effectiveCanPop,
+                    leading: _appleLeading(context, tokens, effectiveCanPop),
                     trailing: _appleTrailing(context, tokens),
                   ),
         child: content,
@@ -246,7 +271,18 @@ class AdaptiveScaffold extends StatelessWidget {
       appBar: _hasBar
           ? AppBar(
               title: title == null ? null : Text(title!),
-              leading: leading,
+              // When canPop/onBack are supplied (e.g. by a router), override the
+              // default ModalRoute/Navigator heuristics and render a back
+              // affordance explicitly.
+              automaticallyImplyLeading: canPop == null && onBack == null,
+              leading: leading ??
+                  ((canPop != null || onBack != null) &&
+                          (canPop ?? Navigator.canPop(context))
+                      ? BackButton(
+                          onPressed:
+                              onBack ?? () => Navigator.of(context).maybePop(),
+                        )
+                      : null),
               actions: [
                 ...centerActions,
                 ...actions,
@@ -271,6 +307,30 @@ class AdaptiveScaffold extends StatelessWidget {
       '[native_adaptive_ui] AdaptiveScaffold title "$title" is longer than '
       "HIG's guidance of under 15 characters for a toolbar title.",
     );
+  }
+
+  /// The leading widget for `CupertinoNavigationBar`.
+  ///
+  /// Returning null hands the decision back to the bar's own
+  /// `automaticallyImplyLeading`, which is the right answer on a classic Apple
+  /// era with no overrides. Two cases have to be built by hand instead: a glass
+  /// era, whose default chevron+"Back" predates Liquid Glass, and a caller who
+  /// supplied [canPop]/[onBack] — the bar would consult the enclosing navigator
+  /// rather than the router, and pop the wrong thing.
+  Widget? _appleLeading(
+    BuildContext context,
+    AdaptiveTokens tokens,
+    bool effectiveCanPop,
+  ) {
+    if (leading != null) return leading;
+    if (leadingSfSymbol != null || !effectiveCanPop) return null;
+    if (tokens.hasGlass) {
+      return _GlassBackButton(tokens: tokens, onPressed: onBack);
+    }
+    if (canPop != null || onBack != null) {
+      return CupertinoNavigationBarBackButton(onPressed: onBack);
+    }
+    return null;
   }
 
   /// Cupertino navigation bars take exactly one trailing widget, so
@@ -384,9 +444,13 @@ class _OverflowButton extends StatelessWidget {
 /// `UIBarButtonItem` to lean on: `CupertinoNavigationBar`'s own default
 /// leading is a plain chevron-and-label predating Liquid Glass entirely.
 class _GlassBackButton extends StatelessWidget {
-  const _GlassBackButton({required this.tokens});
+  const _GlassBackButton({required this.tokens, this.onPressed});
 
   final AdaptiveTokens tokens;
+
+  /// Defaults to `maybePop` on the enclosing navigator. See
+  /// [AdaptiveScaffold.onBack].
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -399,7 +463,7 @@ class _GlassBackButton extends StatelessWidget {
         child: CupertinoButton(
           padding: EdgeInsets.zero,
           minimumSize: const Size(size, size),
-          onPressed: () => Navigator.of(context).maybePop(),
+          onPressed: onPressed ?? () => Navigator.of(context).maybePop(),
           child: GlassSurface(
             tokens: tokens,
             interactive: true,

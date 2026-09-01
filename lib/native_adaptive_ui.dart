@@ -63,7 +63,8 @@ export 'src/widgets/adaptive_navigation.dart'
         adaptiveTabBarKey;
 export 'src/widgets/adaptive_progress_indicator.dart'
     show AdaptiveProgressIndicator;
-export 'src/widgets/adaptive_route.dart' show adaptivePageRoute, pushAdaptive;
+export 'src/widgets/adaptive_route.dart'
+    show adaptivePage, adaptivePageRoute, pushAdaptive;
 export 'src/widgets/adaptive_scaffold.dart' show AdaptiveScaffold;
 export 'src/widgets/adaptive_search_field.dart'
     show AdaptiveSearchField, AdaptiveSearchToolbarButton;
